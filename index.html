@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>義大醫院 - 抗生素劑量智能決策支援系統 (V3 Optimized)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Updated to unpkg for better UMD support -->
+    <script src="https://unpkg.com/lucide@0.263.1/dist/umd/lucide.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+        body { 
+            font-family: 'Noto Sans TC', sans-serif; 
+            background-color: #f1f5f9; /* Slate-100 */
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        .tab-btn {
+            position: relative;
+            overflow: hidden;
+        }
+        .tab-active { 
+            color: #0284c7; /* Sky-600 */
+            font-weight: 700;
+            background-color: #f0f9ff; /* Sky-50 */
+            border-bottom: 3px solid #0284c7;
+        }
+        .tab-inactive { 
+            color: #64748b; /* Slate-500 */
+            background-color: white;
+            border-bottom: 3px solid transparent;
+        }
+        .tab-inactive:hover {
+            background-color: #f8fafc;
+            color: #334155;
+        }
+
+        /* Result Card Animation */
+        .result-card { 
+            animation: fadeIn 0.4s ease-out forwards;
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        @keyframes fadeIn {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Input styling to prevent iOS zoom */
+        input, select { font-size: 16px !important; }
+
+        /* Loader */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #0ea5e9;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col text-slate-800">
+
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-slate-800 to-slate-900 text-white shadow-lg sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="bg-sky-500 p-2 rounded-lg shadow-inner">
+                    <i data-lucide="activity" class="w-6 h-6 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg md:text-xl font-bold tracking-wide leading-tight">抗生素智能決策系統</h1>
+                    <p class="text-[10px] text-slate-400 font-light tracking-wider">EDH ANTIBIOTIC DOSING SUPPORT V3</p>
+                </div>
+            </div>
+            <div class="flex flex-col items-end">
+                <div id="db-status" class="flex items-center gap-2 text-xs bg-slate-700/50 px-3 py-1 rounded-full border border-slate-600">
+                    <span class="loader w-3 h-3 border-2"></span>
+                    <span class="text-slate-300">連線中...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto p-4 flex-grow max-w-6xl">
+        
+        <!-- Navigation Tabs -->
+        <div class="flex rounded-lg shadow-sm mb-6 overflow-hidden border border-slate-200 bg-white">
+            <button onclick="app.switchTab('query')" id="tab-query" class="tab-btn flex-1 py-4 text-center tab-active transition-all duration-200">
+                <div class="flex items-center justify-center gap-2">
+                    <i data-lucide="search" class="w-4 h-4"></i>
+                    <span>劑量查詢</span>
+                </div>
+            </button>
+            <button onclick="app.switchTab('check')" id="tab-check" class="tab-btn flex-1 py-4 text-center tab-inactive transition-all duration-200">
+                <div class="flex items-center justify-center gap-2">
+                    <i data-lucide="shield-check" class="w-4 h-4"></i>
+                    <span>處方檢核</span>
+                </div>
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            <!-- Left Column: Patient Data (Sticky on Desktop) -->
+            <div class="lg:col-span-4 space-y-4 lg:sticky lg:top-24">
+                
+                <!-- Patient Profile Card -->
+                <div class="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden">
+                    <div class="bg-slate-50 px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                        <h2 class="font-bold text-slate-700 flex items-center gap-2">
+                            <i data-lucide="user-circle" class="w-5 h-5 text-sky-600"></i>
+                            病人參數
+                        </h2>
+                        <button onclick="app.resetForm()" class="text-xs text-slate-400 hover:text-red-500 transition flex items-center gap-1">
+                            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> 重置
+                        </button>
+                    </div>
+                    
+                    <div class="p-5 space-y-4">
+                        <!-- Sex & Age -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="group">
+                                <label class="block text-xs font-bold text-slate-500 mb-1 group-focus-within:text-sky-600 transition">性別</label>
+                                <div class="relative">
+                                    <select id="p-sex" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white transition appearance-none" onchange="app.calculateMetrics()">
+                                        <option value="M">男性 (Male)</option>
+                                        <option value="F">女性 (Female)</option>
+                                    </select>
+                                    <i data-lucide="chevron-down" class="absolute right-3 top-3 w-4 h-4 text-slate-400 pointer-events-none"></i>
+                                </div>
+                            </div>
+                            <div class="group">
+                                <label class="block text-xs font-bold text-slate-500 mb-1 group-focus-within:text-sky-600 transition">年齡</label>
+                                <input type="number" id="p-age" min="0" max="150" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white transition" placeholder="Age" oninput="app.calculateMetrics()">
+                            </div>
+                        </div>
+
+                        <!-- Ht & Wt -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="group">
+                                <label class="block text-xs font-bold text-slate-500 mb-1 group-focus-within:text-sky-600 transition">身高 (cm)</label>
+                                <input type="number" id="p-ht" min="0" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white transition" placeholder="cm" oninput="app.calculateMetrics()">
+                            </div>
+                            <div class="group">
+                                <label class="block text-xs font-bold text-slate-500 mb-1 group-focus-within:text-sky-600 transition">實際體重 (kg)</label>
+                                <input type="number" id="p-wt" min="0" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white transition" placeholder="kg" oninput="app.calculateMetrics()">
+                            </div>
+                        </div>
+
+                        <!-- SCr -->
+                        <div class="group">
+                            <label class="block text-xs font-bold text-slate-500 mb-1 group-focus-within:text-sky-600 transition">血清肌酸酐 (SCr)</label>
+                            <div class="relative">
+                                <input type="number" id="p-scr" step="0.01" min="0.1" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white transition pl-3 pr-12" placeholder="mg/dL" oninput="app.calculateMetrics()">
+                                <span class="absolute right-3 top-2.5 text-xs text-slate-400 font-medium">mg/dL</span>
+                            </div>
+                        </div>
+
+                        <!-- Calculated Results Panel -->
+                        <div id="metrics-panel" class="hidden bg-sky-50 rounded-lg border border-sky-100 p-4 space-y-2 relative overflow-hidden">
+                            <div class="absolute -right-4 -top-4 w-16 h-16 bg-sky-200 rounded-full opacity-20 blur-xl"></div>
+                            
+                            <div class="flex justify-between items-center pb-2 border-b border-sky-200/50">
+                                <span class="text-xs text-sky-800 font-bold">預估腎絲球過濾率 (eGFR)</span>
+                                <span id="disp-ccr" class="text-xl font-bold text-sky-600">--</span>
+                            </div>
+                            
+                            <div class="grid grid-cols-2 gap-2 text-xs pt-1">
+                                <div>
+                                    <span class="text-slate-500 block">BMI</span>
+                                    <span id="disp-bmi" class="font-bold text-slate-700">--</span>
+                                </div>
+                                <div>
+                                    <span class="text-slate-500 block">IBW (理想)</span>
+                                    <span id="disp-ibw" class="font-bold text-slate-700">--</span>
+                                </div>
+                                <div>
+                                    <span class="text-slate-500 block">AdjBW (校正)</span>
+                                    <span id="disp-adjbw" class="font-bold text-slate-700">--</span>
+                                </div>
+                                <div>
+                                    <span class="text-slate-500 block">計算體重</span>
+                                    <span id="disp-weight-type" class="font-bold text-amber-600 truncate">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Clinical Scenario Card -->
+                <div class="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden">
+                    <div class="bg-slate-50 px-5 py-3 border-b border-slate-100">
+                        <h2 class="font-bold text-slate-700 flex items-center gap-2">
+                            <i data-lucide="settings-2" class="w-5 h-5 text-amber-500"></i>
+                            情境設定
+                        </h2>
+                    </div>
+                    <div class="p-5">
+                         <!-- Loading Dose Toggle -->
+                        <label class="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-amber-400 hover:shadow-sm transition mb-4 group">
+                            <div class="flex items-center gap-2">
+                                <div class="bg-amber-100 p-1.5 rounded text-amber-600">
+                                    <i data-lucide="zap" class="w-4 h-4"></i>
+                                </div>
+                                <span class="text-sm font-bold text-slate-600 group-hover:text-amber-700">Loading Dose (起始劑量)</span>
+                            </div>
+                            <div class="relative inline-block w-10 h-6 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" id="is-loading-dose" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer border-slate-300 left-0.5 top-0.5 checked:right-0.5 checked:left-auto transition-all"/>
+                                <label for="is-loading-dose" class="toggle-label block overflow-hidden h-6 rounded-full bg-slate-200 cursor-pointer"></label>
+                            </div>
+                        </label>
+                        <style>
+                            #is-loading-dose:checked { border-color: #f59e0b; }
+                            #is-loading-dose:checked + label { background-color: #f59e0b; }
+                        </style>
+
+                        <!-- Dialysis Options -->
+                        <label class="block text-xs font-bold text-slate-500 mb-2">腎臟替代療法 (RRT)</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="dialysis" value="None" checked class="peer sr-only">
+                                <div class="p-2 text-center text-sm rounded border border-slate-200 text-slate-600 peer-checked:bg-slate-800 peer-checked:text-white peer-checked:border-slate-800 transition">無</div>
+                            </label>
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="dialysis" value="HD" class="peer sr-only">
+                                <div class="p-2 text-center text-sm rounded border border-slate-200 text-slate-600 peer-checked:bg-slate-800 peer-checked:text-white peer-checked:border-slate-800 transition">HD</div>
+                            </label>
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="dialysis" value="CVVH" class="peer sr-only">
+                                <div class="p-2 text-center text-sm rounded border border-slate-200 text-slate-600 peer-checked:bg-slate-800 peer-checked:text-white peer-checked:border-slate-800 transition">CVVH</div>
+                            </label>
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="dialysis" value="PD" class="peer sr-only">
+                                <div class="p-2 text-center text-sm rounded border border-slate-200 text-slate-600 peer-checked:bg-slate-800 peer-checked:text-white peer-checked:border-slate-800 transition">PD</div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Drug Selection & Results -->
+            <div class="lg:col-span-8 space-y-6">
+                
+                <!-- Drug Selector -->
+                <div class="bg-white p-6 rounded-xl shadow-md border border-slate-100">
+                    <label class="block text-sm font-bold text-slate-700 mb-2 flex justify-between">
+                        <span>選擇抗生素 (Antibiotics)</span>
+                        <span id="drug-count" class="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">Loading...</span>
+                    </label>
+                    <div class="relative group">
+                        <select id="drug-select" class="w-full appearance-none bg-slate-50 border-2 border-slate-200 hover:border-sky-300 rounded-xl p-4 pr-10 text-base font-medium text-slate-700 focus:border-sky-500 focus:outline-none focus:bg-white transition shadow-sm">
+                            <option value="">資料載入中...</option>
+                        </select>
+                        <div class="absolute inset-y-0 right-0 flex items-center px-4 pointer-events-none text-slate-400 group-hover:text-sky-500 transition">
+                            <i data-lucide="chevron-down" class="w-5 h-5"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Check Mode Inputs -->
+                <div id="check-inputs" class="hidden bg-purple-50 p-6 rounded-xl border border-purple-100 shadow-inner">
+                    <div class="flex items-center gap-2 mb-4 text-purple-800">
+                        <i data-lucide="edit-3" class="w-5 h-5"></i>
+                        <h3 class="font-bold">輸入目前處方進行比對</h3>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+                        <div class="md:col-span-5">
+                            <label class="block text-xs font-bold text-purple-600 mb-1">單次劑量 (Dose)</label>
+                            <div class="relative">
+                                <input type="number" id="check-dose-val" class="w-full border border-purple-200 rounded-lg p-2.5 pl-3 pr-10 text-sm focus:ring-2 focus:ring-purple-400 outline-none" placeholder="1000">
+                                <span class="absolute right-3 top-2.5 text-xs text-purple-400 font-bold">mg</span>
+                            </div>
+                        </div>
+                        <div class="md:col-span-4">
+                            <label class="block text-xs font-bold text-purple-600 mb-1">頻次 (Freq)</label>
+                            <select id="check-freq" class="w-full border border-purple-200 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-purple-400 outline-none bg-white">
+                                <option value="QD">QD (每日1次)</option>
+                                <option value="Q12H">Q12H (每12小時)</option>
+                                <option value="Q8H">Q8H (每8小時)</option>
+                                <option value="Q6H">Q6H (每6小時)</option>
+                                <option value="Q48H">Q48H (每2天)</option>
+                                <option value="QOD">QOD (隔日)</option>
+                                <option value="TIW">TIW (每週3次)</option>
+                                <option value="STAT">STAT (單次)</option>
+                            </select>
+                        </div>
+                        <div class="md:col-span-3 flex items-end">
+                            <button onclick="app.performCheck()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-4 rounded-lg shadow-md hover:shadow-lg transition active:scale-95 flex items-center justify-center gap-2">
+                                <i data-lucide="check" class="w-4 h-4"></i> 檢核
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Query Button (Only in Query Mode) -->
+                <div id="query-actions">
+                    <button onclick="app.performQuery()" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:shadow-sky-200 transition-all active:scale-[0.98] flex justify-center items-center gap-2 text-lg">
+                        <i data-lucide="search" class="w-5 h-5"></i>
+                        查詢建議劑量
+                    </button>
+                </div>
+
+                <!-- Results Area -->
+                <div id="results-area" class="space-y-4 min-h-[200px]">
+                    <div class="flex flex-col items-center justify-center h-48 text-slate-300 border-2 border-dashed border-slate-200 rounded-xl">
+                        <i data-lucide="clipboard-list" class="w-12 h-12 mb-2 opacity-50"></i>
+                        <p class="text-sm">等待查詢中...</p>
+                    </div>
+                </div>
+
+                <!-- Disclaimer -->
+                <div class="text-center text-[10px] text-slate-400 mt-8 pb-8 px-4">
+                    <p>⚠️ 免責聲明：本系統僅供醫療專業人員輔助決策參考，不能取代臨床專業判斷。</p>
+                    <p>計算公式採用 Cockcroft-Gault Equation，體重選取邏輯依據醫院規範 (BMI < 18.5: ActBW, 18.5-25: IBW, ≥ 25: AdjBW)。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notification -->
+        <div id="toast-container" class="fixed bottom-6 right-6 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+    </main>
+
+    <!-- Raw Data Fallback -->
+    <script id="csv-data" type="text/plain">
+DrugName,Category,CCR_Min,CCR_Max,Wt_Min,Wt_Max,Dose,Unit,Freq,Route,Remarks,Is_MgKg,Obese_Ref,NonObese_Ref
+Anidulafungin 100mg/vial,CCR,0,999,0,999,100,MG,QD,IVF,,N,實際體重,實際體重
+Anidulafungin 100mg/vial,HD,0,999,0,999,100,MG,QD,IVF,,N,實際體重,實際體重
+Anidulafungin 100mg/vial,CVVH,0,999,0,999,100,MG,QD,IVF,,N,實際體重,實際體重
+Anidulafungin 100mg/vial,PD,0,999,0,999,100,MG,QD,IVF,,N,實際體重,實際體重
+Anidulafungin 100mg/vial,Loading dose,0,999,0,999,200,MG,i,IVF,Initial 200mg single dose on day 1.,N,實際體重,實際體重
+Caspofungin 50mg/vial,CCR,0,999,0,999,50,MG,QD,IVF,,N,實際體重,實際體重
+Caspofungin 50mg/vial,HD,0,999,0,999,50,MG,QD,IVF,,N,實際體重,實際體重
+Caspofungin 50mg/vial,CVVH,0,999,0,999,50,MG,QD,IVF,,N,實際體重,實際體重
+Caspofungin 50mg/vial,PD,0,999,0,999,50,MG,QD,IVF,,N,實際體重,實際體重
+Caspofungin 50mg/vial,Loading dose,0,999,0,999,70,MG,i,IVF,Initial 70mg single dose on day 1.,N,實際體重,實際體重
+Cefepime 2g/vial,CCR,60,999,0,999,2000,MG,Q12H,IVD,,N,實際體重,實際體重
+Cefepime 2g/vial,CCR,60,999,0,999,2000,MG,Q8H,IVD,"For Pseudomonas aeruginosa OR septic shock OR neutropenic fever",N,實際體重,實際體重
+Cefepime 2g/vial,CCR,30,59,0,999,2000,MG,Q24H,IVD,,N,實際體重,實際體重
+Cefepime 2g/vial,CCR,11,29,0,999,1000,MG,Q24H,IVD,,N,實際體重,實際體重
+Cefepime 2g/vial,CCR,0,10,0,999,500,MG,Q24H,IVD,,N,實際體重,實際體重
+Cefepime 2g/vial,HD,0,999,0,999,1000,MG,Q24H,IVD,"On HD day: give dose after HD",N,實際體重,實際體重
+Cefepime 2g/vial,CVVH,0,999,0,999,2000,MG,Q12H,IVD,,N,實際體重,實際體重
+Cefepime 2g/vial,PD,0,999,0,999,1000,MG,Q48H,IVD,,N,實際體重,實際體重
+Colistin 2MIU/vial,Loading dose,0,999,0,999,300,MG,i,IVD,"Loading dose: 300mg (9 MIU) x 1. Based on CBA.",N,校正體重,校正體重
+Colistin 2MIU/vial,CCR,80,999,0,999,150,MG,Q12H,IVD,"Daily dose ~ 300mg (100-180mg q12h)",N,校正體重,校正體重
+Colistin 2MIU/vial,CCR,50,79,0,999,130,MG,Q12H,IVD,"Daily dose ~ 260mg",N,校正體重,校正體重
+Colistin 2MIU/vial,CCR,30,49,0,999,110,MG,Q12H,IVD,"Daily dose ~ 220mg",N,校正體重,校正體重
+Colistin 2MIU/vial,CCR,10,29,0,999,140,MG,Q24H,IVD,"Daily dose ~ 140mg",N,校正體重,校正體重
+Colistin 2MIU/vial,CCR,0,9,0,999,100,MG,Q24H,IVD,"Daily dose ~ 100mg",N,校正體重,校正體重
+Colistin 2MIU/vial,HD,0,999,0,999,130,MG,Q24H,IVD,"On HD day: give dose after HD. Or 40mg q12h.",N,校正體重,校正體重
+Colistin 2MIU/vial,CVVH,0,999,0,999,220,MG,Q12H,IVD,"Or 440mg QD",N,校正體重,校正體重
+Daptomycin 500mg/vial,CCR,30,999,0,999,4,MG,QD,IVF,"Skin/Soft tissue infection: 4 mg/kg q24h",Y,實際體重,實際體重
+Daptomycin 500mg/vial,CCR,30,999,0,999,6,MG,QD,IVF,"Bacteremia/Endocarditis: 6 mg/kg q24h",Y,實際體重,實際體重
+Daptomycin 500mg/vial,CCR,0,29,0,999,4,MG,Q48H,IVF,"Skin/Soft tissue: 4 mg/kg q48h",Y,實際體重,實際體重
+Daptomycin 500mg/vial,CCR,0,29,0,999,6,MG,Q48H,IVF,"Bacteremia: 6 mg/kg q48h",Y,實際體重,實際體重
+Daptomycin 500mg/vial,HD,0,999,0,999,6,MG,Q48H,IVF,"Give dose after HD",Y,實際體重,實際體重
+Teicoplanin 200mg/vial,Loading dose,0,999,0,999,6,MG,Q12H,IVF,"Initial 3 doses (q12h)",Y,校正體重,校正體重
+Teicoplanin 200mg/vial,CCR,50,999,0,999,6,MG,QD,IVF,"Maintenance",Y,校正體重,校正體重
+Teicoplanin 200mg/vial,CCR,20,49,0,999,3,MG,QD,IVF,"Maintenance (Or 6mg/kg Q2D)",Y,校正體重,校正體重
+Teicoplanin 200mg/vial,CCR,0,19,0,999,2,MG,QD,IVF,"Maintenance (Or 6mg/kg Q3D)",Y,校正體重,校正體重
+Teicoplanin 200mg/vial,HD,0,999,0,999,2,MG,QD,IVF,"Maintenance",Y,校正體重,校正體重
+Voriconazole 200mg/tab,Loading dose,0,999,0,40,200,MG,Q12H,PO,"Body weight < 40kg",N,實際體重,實際體重
+Voriconazole 200mg/tab,Loading dose,0,999,40,999,400,MG,Q12H,PO,"Body weight >= 40kg",N,實際體重,實際體重
+Voriconazole 200mg/tab,CCR,50,999,0,40,100,MG,Q12H,PO,"Maintenance, BW < 40kg",N,實際體重,實際體重
+Voriconazole 200mg/tab,CCR,50,999,40,999,200,MG,Q12H,PO,"Maintenance, BW >= 40kg",N,實際體重,實際體重
+Voriconazole 200mg/vial,CCR,50,999,0,999,4,MG,Q12H,IVF,"Maintenance dose",Y,實際體重,實際體重
+Vancomycin 1g/vial,CCR,90,999,0,999,1000,MG,Q12H,IVD,"Monitor Trough",N,實際體重,實際體重
+Vancomycin 1g/vial,CCR,50,89,0,999,1000,MG,Q24H,IVD,"Monitor Trough",N,實際體重,實際體重
+    </script>
+
+    <script>
+        /**
+         * E-DA Hospital Antibiotic Decision Support System V3
+         * Architecture: Simple Module Pattern
+         */
+        const app = (function() {
+            
+            // --- Configuration ---
+            const CONFIG = {
+                // Please replace with your Google Apps Script Web App URL
+                API_URL: "https://script.google.com/macros/s/AKfycbyIlj9JfsGuXMH6ogAONxX_kV_t66OhJMeqcmgwwVbLFi-OF-vvevQGOLLsF-1SKn9RiQ/exec" 
+            };
+
+            // --- State ---
+            let allDrugs = [];
+            let currentMetrics = null;
+
+            // --- UI Elements Cache ---
+            const els = {};
+
+            // --- Initialization ---
+            function init() {
+                // Cache elements by ID
+                document.querySelectorAll('[id]').forEach(el => els[el.id] = el);
+                
+                // Load Icons Safely
+                updateIcons();
+
+                // Load Data
+                fetchData();
+            }
+
+            // --- Helper to safely load icons ---
+            function updateIcons() {
+                if (typeof lucide !== 'undefined' && lucide.createIcons) {
+                    lucide.createIcons();
+                } else {
+                    console.warn("Lucide icons library not loaded yet.");
+                }
+            }
+
+            // --- Data Layer ---
+            async function fetchData() {
+                const statusBadge = els['db-status'];
+                
+                try {
+                    const response = await fetch(CONFIG.API_URL);
+                    if (!response.ok) throw new Error("Network Error");
+                    
+                    const jsonData = await response.json();
+                    allDrugs = normalizeData(jsonData);
+                    
+                    statusBadge.className = "flex items-center gap-2 text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full border border-green-200";
+                    statusBadge.innerHTML = `<i data-lucide="cloud" class="w-3 h-3"></i> 雲端資料庫`;
+                    showToast("雲端資料已同步更新", "success");
+
+                } catch (error) {
+                    console.warn("Offline mode activated", error);
+                    const csvContent = els['csv-data'].textContent;
+                    allDrugs = parseCSV(csvContent);
+                    
+                    statusBadge.className = "flex items-center gap-2 text-xs bg-amber-100 text-amber-700 px-3 py-1 rounded-full border border-amber-200";
+                    statusBadge.innerHTML = `<i data-lucide="database" class="w-3 h-3"></i> 離線備援模式`;
+                    showToast("網路異常，已切換至離線備援模式", "warning");
+                } finally {
+                    updateDropdown();
+                    updateIcons(); // Safe call
+                }
+            }
+
+            function normalizeData(rawData) {
+                return rawData.map(row => ({
+                    ...row,
+                    CCR_Min: parseFloat(row.CCR_Min) || 0,
+                    CCR_Max: parseFloat(row.CCR_Max) || 999,
+                    Wt_Min: parseFloat(row.Wt_Min) || 0,
+                    Wt_Max: parseFloat(row.Wt_Max) || 999,
+                    Dose: parseFloat(row.Dose) || 0
+                }));
+            }
+
+            function parseCSV(csvText) {
+                const lines = csvText.trim().split('\n');
+                const headers = lines[0].split(',').map(h => h.trim());
+                const data = [];
+
+                for (let i = 1; i < lines.length; i++) {
+                    // Handle quoted strings in CSV
+                    const rowMatch = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+                    if (!rowMatch) continue;
+                    
+                    const rowValues = rowMatch.map(val => val.replace(/^"|"$/g, '').trim());
+                    if (rowValues.length < headers.length) continue; 
+
+                    const obj = {};
+                    headers.forEach((h, index) => {
+                        obj[h] = rowValues[index];
+                    });
+                    data.push(obj);
+                }
+                return normalizeData(data);
+            }
+
+            function updateDropdown() {
+                const select = els['drug-select'];
+                const count = els['drug-count'];
+                
+                select.innerHTML = '<option value="">-- 請選擇藥品 --</option>';
+                const uniqueNames = Array.from(new Set(allDrugs.map(d => d.DrugName))).sort();
+                
+                uniqueNames.forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    select.appendChild(opt);
+                });
+                
+                count.textContent = `${uniqueNames.length} 項藥品`;
+            }
+
+            // --- Logic Layer (Clinical Calculations) ---
+            function calculateMetrics() {
+                const sex = els['p-sex'].value;
+                const age = parseFloat(els['p-age'].value);
+                const ht = parseFloat(els['p-ht'].value);
+                const wt = parseFloat(els['p-wt'].value);
+                const scr = parseFloat(els['p-scr'].value);
+
+                const panel = els['metrics-panel'];
+                
+                if (!age || !ht || !wt || !scr || age < 0 || ht < 0 || wt < 0 || scr <= 0) {
+                    panel.classList.add('hidden');
+                    currentMetrics = null;
+                    return;
+                }
+
+                panel.classList.remove('hidden');
+
+                // 1. BMI
+                const htM = ht / 100;
+                const bmi = wt / (htM * htM);
+                els['disp-bmi'].textContent = bmi.toFixed(1);
+
+                // 2. IBW
+                let htInch = ht / 2.54;
+                if (htInch < 60) htInch = 60; // Standard constraint, though some use raw
+                
+                let ibw = 0;
+                if (sex === 'M') {
+                    ibw = 50 + 2.3 * (htInch - 60);
+                } else {
+                    ibw = 45.5 + 2.3 * (htInch - 60);
+                }
+                els['disp-ibw'].textContent = ibw.toFixed(1) + " kg";
+
+                // 3. AdjBW
+                const adjbw = ibw + 0.4 * (wt - ibw);
+                els['disp-adjbw'].textContent = adjbw.toFixed(1) + " kg";
+
+                // 4. Determine Weight for CCR (Protocol Specific)
+                let ccrWeight = 0;
+                let weightLabel = "";
+                
+                if (bmi < 18.5) {
+                    ccrWeight = wt;
+                    weightLabel = "實際體重 (ActBW)";
+                } else if (bmi >= 18.5 && bmi < 25) {
+                    ccrWeight = ibw;
+                    weightLabel = "理想體重 (IBW)";
+                } else {
+                    ccrWeight = adjbw;
+                    weightLabel = "校正體重 (AdjBW)";
+                }
+
+                // 5. Cockcroft-Gault
+                let ccr = ((140 - age) * ccrWeight) / (72 * scr);
+                if (sex === 'F') ccr *= 0.85;
+
+                els['disp-ccr'].textContent = ccr.toFixed(1) + " ml/min";
+                els['disp-weight-type'].textContent = weightLabel;
+
+                currentMetrics = {
+                    bmi, abw: wt, ibw, adjbw, ccr,
+                    isObese: bmi >= 30 
+                };
+            }
+
+            function getRefWeight(row, metrics) {
+                // Fallback for logic safety
+                if (!metrics) return 0;
+
+                const refType = metrics.isObese ? row.Obese_Ref : row.NonObese_Ref;
+                
+                if (refType.includes("實際")) return metrics.abw;
+                if (refType.includes("理想")) return metrics.ibw;
+                if (refType.includes("校正")) return metrics.adjbw;
+                
+                return metrics.abw; 
+            }
+
+            // --- Action Layer ---
+            function resetForm() {
+                els['p-age'].value = '';
+                els['p-ht'].value = '';
+                els['p-wt'].value = '';
+                els['p-scr'].value = '';
+                els['metrics-panel'].classList.add('hidden');
+                els['results-area'].innerHTML = '<div class="flex flex-col items-center justify-center h-48 text-slate-300 border-2 border-dashed border-slate-200 rounded-xl"><i data-lucide="clipboard-list" class="w-12 h-12 mb-2 opacity-50"></i><p class="text-sm">資料已重置</p></div>';
+                currentMetrics = null;
+                updateIcons(); // Safe call
+            }
+
+            function performQuery() {
+                if (!validateInput()) return;
+
+                const drugName = els['drug-select'].value;
+                const isLoading = els['is-loading-dose'].checked;
+                const dialysis = document.querySelector('input[name="dialysis"]:checked').value;
+
+                let { results, logic } = engine(drugName, isLoading, dialysis, currentMetrics);
+                renderResults(results, logic, false);
+            }
+
+            function performCheck() {
+                if (!validateInput()) return;
+                
+                const drugName = els['drug-select'].value;
+                const doseVal = parseFloat(els['check-dose-val'].value);
+                
+                if (!doseVal) {
+                    showToast("請輸入單次劑量以進行檢核", "error");
+                    return;
+                }
+
+                const isLoading = els['is-loading-dose'].checked;
+                const dialysis = document.querySelector('input[name="dialysis"]:checked').value;
+                const freqVal = els['check-freq'].value;
+
+                let { results, logic } = engine(drugName, isLoading, dialysis, currentMetrics);
+                
+                renderResults(results, logic, true, { dose: doseVal, freq: freqVal });
+            }
+
+            // Core Logic Engine
+            function engine(drugName, isLoading, dialysis, metrics) {
+                let candidates = allDrugs.filter(d => d.DrugName === drugName);
+                let filtered = [];
+                let logic = "";
+
+                // Priority 1: Loading Dose
+                if (isLoading) {
+                    const loadingRows = candidates.filter(d => d.Category.toLowerCase().includes("loading"));
+                    if (loadingRows.length > 0) {
+                        filtered = loadingRows;
+                        logic = "Loading Dose";
+                    }
+                }
+
+                // Priority 2: Dialysis (if no loading dose found/selected)
+                if (filtered.length === 0 && dialysis !== "None") {
+                    const diaRows = candidates.filter(d => d.Category === dialysis);
+                    if (diaRows.length > 0) {
+                        filtered = diaRows;
+                        logic = `透析模式 (${dialysis})`;
+                    }
+                }
+
+                // Priority 3: General CCR
+                if (filtered.length === 0) {
+                    filtered = candidates.filter(d => {
+                        return d.Category === "CCR" && 
+                               metrics.ccr >= d.CCR_Min && 
+                               metrics.ccr < d.CCR_Max;
+                    });
+                    logic = `CCR 區間 (${metrics.ccr.toFixed(1)})`;
+                }
+
+                // Weight Filtering (For pediatrics or specific weight-based constraints)
+                let finalResults = filtered.filter(row => {
+                    const refWt = getRefWeight(row, metrics);
+                    return refWt >= row.Wt_Min && refWt < row.Wt_Max;
+                });
+
+                return { results: finalResults, logic };
+            }
+
+            function validateInput() {
+                if (!currentMetrics) {
+                    showToast("請先輸入完整的病人資料", "error");
+                    return false;
+                }
+                if (!els['drug-select'].value) {
+                    showToast("請選擇抗生素", "warning");
+                    return false;
+                }
+                return true;
+            }
+
+            function renderResults(rows, logic, isCheckMode, checkInput = null) {
+                const container = els['results-area'];
+                container.innerHTML = "";
+
+                if (rows.length === 0) {
+                    container.innerHTML = `
+                        <div class="bg-red-50 border border-red-200 p-6 rounded-xl flex items-start gap-4">
+                            <div class="bg-red-100 p-2 rounded-full text-red-500 flex-shrink-0">
+                                <i data-lucide="alert-octagon" class="w-6 h-6"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-red-800 font-bold text-lg mb-1">查無符合建議</h3>
+                                <p class="text-red-600 text-sm">依據篩選邏輯：<span class="font-mono bg-red-100 px-1 rounded">${logic}</span>，未找到對應資料。</p>
+                                <p class="text-red-600 text-xs mt-2">建議檢查病人數值是否超出一般範圍，或手動查閱仿單。</p>
+                            </div>
+                        </div>`;
+                    updateIcons(); // Safe call
+                    return;
+                }
+
+                rows.forEach(row => {
+                    const refWt = getRefWeight(row, currentMetrics);
+                    
+                    let calcDose = row.Dose;
+                    let doseDisplay = `<span class="text-2xl font-bold text-sky-700">${row.Dose}</span> <span class="text-sm text-slate-500">${row.Unit}</span>`;
+                    
+                    if (row.Is_MgKg === 'Y') {
+                        calcDose = row.Dose * refWt;
+                        doseDisplay = `
+                            <div class="flex flex-col">
+                                <span class="text-2xl font-bold text-sky-700">${calcDose.toFixed(0)} <span class="text-base font-normal text-slate-500">${row.Unit}</span></span>
+                                <span class="text-xs text-slate-400">計算: ${row.Dose} mg/kg x ${refWt.toFixed(1)} kg</span>
+                            </div>`;
+                    }
+
+                    // Validation Logic UI
+                    let statusHeader = "";
+                    let cardBorder = "border-l-4 border-sky-500";
+                    
+                    if (isCheckMode && checkInput) {
+                        const freqMatch = row.Freq.toUpperCase() === checkInput.freq.toUpperCase();
+                        const inputDose = checkInput.dose;
+                        // Allow 10% margin of error
+                        const isDoseMatch = Math.abs(inputDose - calcDose) < (calcDose * 0.1); 
+
+                        if (freqMatch && isDoseMatch) {
+                            cardBorder = "border-l-4 border-green-500 bg-green-50/50";
+                            statusHeader = `<div class="mb-3 inline-flex items-center gap-1 bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold"><i data-lucide="check-circle" class="w-3 h-3"></i> 處方合理</div>`;
+                        } else {
+                            cardBorder = "border-l-4 border-orange-500 bg-orange-50/50";
+                            statusHeader = `<div class="mb-3 inline-flex items-center gap-1 bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold"><i data-lucide="alert-triangle" class="w-3 h-3"></i> 處方差異</div>`;
+                        }
+                    }
+
+                    const card = document.createElement('div');
+                    card.className = `bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition result-card ${cardBorder} mb-4 border-t border-r border-b border-slate-100`;
+                    
+                    card.innerHTML = `
+                        ${statusHeader}
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h3 class="font-bold text-lg text-slate-800 leading-tight">${row.DrugName}</h3>
+                                <div class="flex gap-2 mt-1">
+                                    <span class="bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5 rounded uppercase tracking-wider font-bold">${row.Category}</span>
+                                    ${row.Route ? `<span class="bg-blue-50 text-blue-500 text-[10px] px-2 py-0.5 rounded uppercase tracking-wider font-bold">${row.Route}</span>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-6 mb-4">
+                            <div class="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                <span class="block text-xs font-bold text-slate-400 mb-1 uppercase">建議劑量 (Dose)</span>
+                                ${doseDisplay}
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                <span class="block text-xs font-bold text-slate-400 mb-1 uppercase">頻次 (Freq)</span>
+                                <span class="text-xl font-bold text-slate-700">${row.Freq}</span>
+                            </div>
+                        </div>
+
+                        ${row.Remarks ? `
+                        <div class="flex gap-3 items-start bg-amber-50 p-3 rounded-lg text-sm text-amber-800 border border-amber-100/50 mb-3">
+                            <i data-lucide="info" class="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-500"></i>
+                            <span class="leading-relaxed">${row.Remarks}</span>
+                        </div>` : ''}
+
+                        <div class="flex justify-between items-center pt-3 border-t border-slate-100 text-[10px] text-slate-400">
+                            <span>計算基礎: ${currentMetrics.isObese ? row.Obese_Ref : row.NonObese_Ref} (${refWt.toFixed(1)}kg)</span>
+                            <span class="font-mono">Logic: ${logic}</span>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                });
+                updateIcons(); // Safe call
+            }
+
+            // --- UI Utilities ---
+            function switchTab(tabName) {
+                const queryTab = els['tab-query'];
+                const checkTab = els['tab-check'];
+                const checkInputArea = els['check-inputs'];
+                const queryActionArea = els['query-actions'];
+                const resultsArea = els['results-area'];
+
+                // Reset Results
+                resultsArea.innerHTML = '<div class="flex flex-col items-center justify-center h-48 text-slate-300 border-2 border-dashed border-slate-200 rounded-xl"><i data-lucide="refresh-cw" class="w-12 h-12 mb-2 opacity-50"></i><p class="text-sm">模式已切換，請重新查詢</p></div>';
+                updateIcons(); // Safe call
+
+                if (tabName === 'query') {
+                    queryTab.className = "tab-btn flex-1 py-4 text-center tab-active transition-all duration-200";
+                    checkTab.className = "tab-btn flex-1 py-4 text-center tab-inactive transition-all duration-200";
+                    checkInputArea.classList.add('hidden');
+                    queryActionArea.classList.remove('hidden');
+                } else {
+                    checkTab.className = "tab-btn flex-1 py-4 text-center tab-active transition-all duration-200";
+                    queryTab.className = "tab-btn flex-1 py-4 text-center tab-inactive transition-all duration-200";
+                    checkInputArea.classList.remove('hidden');
+                    queryActionArea.classList.add('hidden');
+                }
+            }
+
+            function showToast(msg, type = 'info') {
+                const container = els['toast-container'];
+                const toast = document.createElement('div');
+                
+                const styles = {
+                    success: 'bg-emerald-600 text-white shadow-emerald-200',
+                    error: 'bg-red-500 text-white shadow-red-200',
+                    warning: 'bg-amber-500 text-white shadow-amber-200',
+                    info: 'bg-slate-800 text-white shadow-slate-300'
+                };
+                
+                const icons = {
+                    success: 'check-circle',
+                    error: 'x-circle',
+                    warning: 'alert-triangle',
+                    info: 'info'
+                };
+
+                toast.className = `${styles[type]} shadow-lg px-4 py-3 rounded-lg flex items-center gap-3 text-sm font-medium transform transition-all duration-300 translate-y-10 opacity-0`;
+                toast.innerHTML = `<i data-lucide="${icons[type]}" class="w-4 h-4"></i> ${msg}`;
+                
+                container.appendChild(toast);
+                updateIcons(); // Safe call
+
+                // Animate In
+                requestAnimationFrame(() => {
+                    toast.classList.remove('translate-y-10', 'opacity-0');
+                });
+
+                // Auto Dismiss
+                setTimeout(() => {
+                    toast.classList.add('translate-y-10', 'opacity-0');
+                    setTimeout(() => toast.remove(), 300);
+                }, 3000);
+            }
+
+            // Expose Public Methods
+            return {
+                init,
+                calculateMetrics,
+                performQuery,
+                performCheck,
+                switchTab,
+                resetForm
+            };
+
+        })();
+
+        // Start App
+        window.addEventListener('DOMContentLoaded', app.init);
+    </script>
+</body>
+</html>
